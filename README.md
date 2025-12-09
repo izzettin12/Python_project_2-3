@@ -22,10 +22,10 @@ This project demonstrates advanced Python concepts including Object-Oriented Pro
 ---
 
 ## 3. Tech Stack
-* **Language**: Python 3.10+
-* **Database**: MongoDB (requires local installation or Docker)
+* **Language**: Python
+* **Database**: MongoDB
 * **ODM**: `mongoengine` (for object-document mapping)
-* **API Client**: `requests` with `urllib3` (for HTTP retries)
+* **API Client**: `requests` with `urllib3`
 * **Testing**: `pytest` and `pytest-mock`
 * **Linting**: `pylint`
 
