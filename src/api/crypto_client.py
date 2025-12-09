@@ -126,3 +126,6 @@ class CoinGeckoClient(BaseCryptoClient):
             symbol_to_id[symbol.lower()] = coin_id
 
         return symbol_to_id
+
+
+#xyz
