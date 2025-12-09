@@ -1,12 +1,18 @@
+"""
+Abstract base classes and concrete implementation for a crypto price client.
+
+This module defines the interface for a crypto client and provides a
+concrete implementation using the CoinGecko API. It includes features
+like request retries with exponential backoff.
+"""
 from __future__ import annotations
 
-import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
 import requests
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 
 
 class BaseCryptoClient(ABC):
@@ -122,10 +128,7 @@ class CoinGeckoClient(BaseCryptoClient):
             symbol = coin.get("symbol")
             if not coin_id or not symbol:
                 continue
-            
+
             symbol_to_id[symbol.lower()] = coin_id
 
         return symbol_to_id
-
-
-#xyz

@@ -1,14 +1,24 @@
+"""
+Main entry point for the Crypto Demo Analytics System CLI.
+
+This script provides a command-line interface for users to interact with
+the crypto tracking and analysis services.
+"""
 from __future__ import annotations
 
 import logging
 
 from mongoengine.errors import DoesNotExist
 
-from src.api.crypto_client import CoinGeckoClient
-from src.services.tracker import CryptoTracker, MarketAnalytics, TrendAnalysis
+from api.crypto_client import CoinGeckoClient
+from services.tracker import CryptoTracker
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.StreamHandler()])
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 # ===================================
 # CLI Menu Action Handlers
@@ -19,9 +29,9 @@ def handle_add_coin(tracker: CryptoTracker):
     query = input("Search by symbol or name (e.g., btc, ethereum): ").strip()
     if not query:
         raise ValueError("Search query cannot be empty.")
-    
+
     coin = tracker.add_tracked_coin_interactive(query=query)
-    logging.info(f"✅ Successfully added and now tracking: {coin.name} ({coin.symbol})")
+    logging.info("✅ Successfully added and now tracking: %s (%s)", coin.name, coin.symbol)
 
 def handle_list_coins(tracker: CryptoTracker):
     """Displays all currently tracked coins."""
@@ -29,7 +39,7 @@ def handle_list_coins(tracker: CryptoTracker):
     if not coins:
         logging.info("No coins are currently being tracked.")
         return
-    
+
     print("\n--- Tracked Coins ---")
     for coin in coins:
         print(f"• {coin.name} ({coin.symbol.upper()})")
@@ -52,11 +62,15 @@ def handle_market_analytics(tracker: CryptoTracker):
         logging.error("❌ Invalid number. Please enter an integer greater than 1.")
 
     analytics = tracker.get_market_analytics(coin_id, limit)
-    
-    if analytics.record_count < limit:
-        logging.warning(f"⚠️ Only {analytics.record_count} records were available. Analytics computed on this subset.")
 
-    print(f"\n--- Market Analytics for {analytics.coin_id.capitalize()} (Last {analytics.record_count} Records) ---")
+    if analytics.record_count < limit:
+        logging.warning(
+            "⚠️ Only %s records were available. Analytics computed on this subset.",
+            analytics.record_count
+        )
+
+    print(f"\n--- Market Analytics for {analytics.coin_id.capitalize()} "
+          f"(Last {analytics.record_count} Records) ---")
     print(f"  Open Price:          ${analytics.open_price:,.4f}")
     print(f"  Close Price:         ${analytics.close_price:,.4f}")
     print(f"  High Price:          ${analytics.high_price:,.4f}")
@@ -76,38 +90,46 @@ def handle_trend_analysis(tracker: CryptoTracker):
             limit = int(limit_str)
             break
         logging.error("❌ Invalid number. Please enter an integer greater than 3.")
-    
+
     analysis = tracker.get_trend_analysis(coin_id, limit)
 
     if analysis.record_count < limit:
-        logging.warning(f"⚠️ Only {analysis.record_count} records were available. Analytics computed on this subset.")
+        logging.warning(
+            "⚠️ Only %s records were available. Analytics computed on this subset.",
+            analysis.record_count
+        )
 
-    print(f"\n--- Trend & Volatility for {analysis.coin_id.capitalize()} (Last {analysis.record_count} Records) ---")
+    print(f"\n--- Trend & Volatility for {analysis.coin_id.capitalize()} "
+          f"(Last {analysis.record_count} Records) ---")
     print(f"  Trend:               {analysis.trend}")
     print(f"  Volatility:          {analysis.volatility}")
     print(f"  Momentum Score:      {analysis.momentum_score:.1f} / 10")
     print(f"  Net Change:          {analysis.net_change_percent:+.2f}%")
-
 
 def handle_delete_coin(tracker: CryptoTracker):
     """Deletes a tracked coin."""
     coin_id = input("Enter coin_id to delete: ").strip().lower()
     if not coin_id:
         raise ValueError("Coin ID cannot be empty.")
-    
+
     while True:
-        confirm_str = input(f"🚨 Are you sure you want to permanently delete '{coin_id}'? (yes/no): ").strip().lower()
+        confirm_str = input(
+            f"🚨 Are you sure you want to permanently delete '{coin_id}'? (yes/no): "
+        ).strip().lower()
         if confirm_str in {"yes", "y", "no", "n"}:
             break
         logging.error("❌ Invalid input. Please enter 'yes' or 'no'.")
-    
+
     if confirm_str in {"no", "n"}:
         logging.info("Delete operation cancelled.")
         return
 
-    delete_prices = input("Delete all associated price history too? (yes/no): ").strip().lower() in {"yes", "y"}
+    delete_prices_str = input(
+        "Delete all associated price history too? (yes/no): "
+    ).strip().lower()
+    delete_prices = delete_prices_str in {"yes", "y"}
     tracker.delete_tracked_coin(coin_id, delete_prices)
-    logging.info(f"✅ Successfully deleted '{coin_id}'.")
+    logging.info("✅ Successfully deleted '%s'.", coin_id)
 
 # ===================================
 # Main Application Loop
@@ -151,18 +173,18 @@ def main() -> None:
             if choice == "0":
                 logging.info("Exiting application.")
                 break
-            
+
             action = actions.get(choice)
             if action:
                 try:
                     action(tracker)
                 except (ValueError, KeyError, DoesNotExist) as e:
-                    logging.error(f"❌ Error: {e}")
+                    logging.error("❌ Error: %s", e)
                 except Exception as e:
-                    logging.error(f"❌ An unexpected error occurred: {e}", exc_info=True)
+                    logging.error("❌ An unexpected error occurred: %s", e, exc_info=True)
             else:
                 logging.error("❌ Invalid option. Please select from the menu.")
-            
+
             input("\nPress Enter to continue...")
 
     finally:

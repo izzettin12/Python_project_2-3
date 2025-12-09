@@ -1,16 +1,24 @@
+"""
+High-level service for tracking and analyzing cryptocurrency prices.
+
+This module provides the main CryptoTracker service class, which encapsulates
+the business logic for interacting with a crypto API, storing data in a
+database, and performing market analysis.
+"""
+# pylint: disable=no-member
 from __future__ import annotations
 
 import logging
 import statistics
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from mongoengine import DoesNotExist, QuerySet, ValidationError
+from mongoengine import ValidationError
 
-from src.api.crypto_client import BaseCryptoClient
-from src.database.mongo import MongoDBConnection, get_default_connection
-from src.models.coin import (
+from api.crypto_client import BaseCryptoClient
+from database.mongo import MongoDBConnection, get_default_connection
+from models.coin import (
     CoinPrice,
     CoinPriceDocument,
     TrackedCoin,
@@ -25,6 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # =========================
 
 @dataclass
+# pylint: disable=too-many-instance-attributes
 class MarketAnalytics:
     """Holds aggregated analytics for a coin over a window of time."""
     coin_id: str
@@ -88,7 +97,7 @@ class CryptoTracker:
         try:
             doc = TrackedCoinDocument(coin_id=coin_id, symbol=symbol.lower(), name=name)
             doc.save()
-            logging.info(f"Added new tracked coin: {name} ({symbol})")
+            logging.info("Added new tracked coin: %s (%s)", name, symbol)
             return doc.to_dataclass()
         except ValidationError as exc:
             raise ValueError(f"Invalid data for new coin: {exc}") from exc
@@ -102,11 +111,11 @@ class CryptoTracker:
         deleted_count = TrackedCoinDocument.objects(coin_id=coin_id).delete()
         if deleted_count == 0:
             raise ValueError(f"Tracked coin with id='{coin_id}' not found.")
-        logging.info(f"Deleted tracked coin '{coin_id}'.")
+        logging.info("Deleted tracked coin '%s'.", coin_id)
 
         if delete_prices:
             deleted_prices = CoinPriceDocument.objects(coin_id=coin_id).delete()
-            logging.info(f"Deleted {deleted_prices} price records for '{coin_id}'.")
+            logging.info("Deleted %s price records for '%s'.", deleted_prices, coin_id)
 
     # =========================
     # Price Snapshot Logic
@@ -117,6 +126,7 @@ class CryptoTracker:
         price = self.client.get_price(coin_id)
         timestamp = datetime.now(timezone.utc)
         doc = CoinPriceDocument(coin_id=coin_id, price=price, timestamp=timestamp).save()
+        # pylint: disable=logging-fstring-interpolation
         logging.info(f"Recorded price for '{coin_id}': ${price:,.4f}")
         return doc.to_dataclass()
 
@@ -124,28 +134,36 @@ class CryptoTracker:
         """Fetches and stores prices for all tracked coins."""
         prices: list[CoinPrice] = []
         tracked_coins = self.list_tracked_coins()
-        
+
         if not tracked_coins:
             logging.warning("No tracked coins to record prices for.")
             return prices
 
-        logging.info(f"Starting price recording for {len(tracked_coins)} coins.")
+        logging.info("Starting price recording for %s coins.", len(tracked_coins))
         for tracked in tracked_coins:
             try:
                 price = self.record_price_for_coin(tracked.coin_id)
                 prices.append(price)
             except Exception as exc:
-                logging.error(f"Failed to record price for {tracked.name} ({tracked.coin_id}): {exc}")
+                logging.error(
+                    "Failed to record price for %s (%s): %s",
+                    tracked.name,
+                    tracked.coin_id,
+                    exc,
+                )
 
-        logging.info(f"Successfully recorded prices for {len(prices)} of {len(tracked_coins)} coins.")
+        logging.info(
+            "Successfully recorded prices for %s of %s coins.",
+            len(prices), len(tracked_coins)
+        )
         return prices
 
     def get_price_history(self, coin_id: str, limit: int) -> List[CoinPrice]:
         """Gets the last N price records for a coin."""
-        return [
-            doc.to_dataclass()
-            for doc in CoinPriceDocument.objects(coin_id=coin_id).order_by("-timestamp").limit(limit)
-        ]
+        price_docs = CoinPriceDocument.objects(coin_id=coin_id).order_by(
+            "-timestamp"
+        ).limit(limit)
+        return [doc.to_dataclass() for doc in price_docs]
 
     # =========================
     # New Analytics Methods
@@ -157,14 +175,17 @@ class CryptoTracker:
         actual_count = len(history)
 
         if actual_count < 2:
-            raise ValueError(f"Not enough data for market analysis. Need at least 2 records, but found {actual_count}.")
+            raise ValueError(
+                "Not enough data for market analysis. "
+                f"Need at least 2 records, but found {actual_count}."
+            )
 
         prices = [item.price for item in history]
         # History is newest first, so reverse for open/close
         open_price = prices[-1]
         close_price = prices[0]
-        
-        net_change = ((close_price - open_price) / open_price) * 100.0 if open_price != 0 else 0.0
+
+        net_change = ((close_price - open_price) / open_price) * 100.0 if open_price else 0.0
 
         return MarketAnalytics(
             coin_id=coin_id,
@@ -177,41 +198,36 @@ class CryptoTracker:
             net_change_percent=net_change,
         )
 
-    def get_trend_analysis(self, coin_id: str, limit: int) -> TrendAnalysis:
-        """Performs trend, volatility, and momentum analysis."""
-        history = self.get_price_history(coin_id, limit)
-        actual_count = len(history)
-
-        if actual_count < 4:
-            raise ValueError(f"Not enough data for trend analysis. Need at least 4 records, but found {actual_count}.")
-
-        prices = [item.price for item in history]
-        # 1. Volatility
+    def _calculate_volatility(self, prices: list[float]) -> str:
+        """Calculates the price volatility."""
+        if len(prices) < 2:
+            return "Unknown"
         mean_price = statistics.mean(prices)
-        std_dev = statistics.stdev(prices) if actual_count > 1 else 0
+        std_dev = statistics.stdev(prices)
         coeff_var = (std_dev / mean_price) if mean_price != 0 else 0
-        
-        if coeff_var < 0.01:
-            volatility = "Low"
-        elif coeff_var < 0.05:
-            volatility = "Medium"
-        else:
-            volatility = "High"
 
-        # 2. Trend (simple slope calculation on time series)
-        n = actual_count
+        if coeff_var < 0.01:
+            return "Low"
+        if coeff_var < 0.05:
+            return "Medium"
+        return "High"
+
+    def _calculate_trend(self, prices: list[float]) -> tuple[str, float]:
+        """Calculates the price trend and normalized slope."""
+        n = len(prices)
         sum_x = sum(range(n))
         sum_y = sum(prices)
         sum_xy = sum(i * prices[i] for i in range(n))
         sum_x2 = sum(i**2 for i in range(n))
-        
+
         try:
             slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x**2)
         except ZeroDivisionError:
             slope = 0
 
-        # Normalize slope to get trend strength
+        mean_price = statistics.mean(prices)
         norm_slope = (slope / mean_price) * 100 if mean_price != 0 else 0
+
         if norm_slope > 0.5:
             trend = "Strong Uptrend"
         elif norm_slope > 0.1:
@@ -223,22 +239,43 @@ class CryptoTracker:
         else:
             trend = "Sideways"
 
-        # 3. Momentum Score & Net Change
+        return trend, norm_slope
+
+    def _calculate_momentum(self, net_change_percent: float, norm_slope: float) -> float:
+        """Calculates the momentum score."""
+        momentum = (abs(net_change_percent) * 0.5) + (abs(norm_slope) * 20)
+        return min(max(momentum, 0), 10)
+
+    def get_trend_analysis(self, coin_id: str, limit: int) -> TrendAnalysis:
+        """Performs trend, volatility, and momentum analysis."""
+        history = self.get_price_history(coin_id, limit)
+        if len(history) < 4:
+            raise ValueError(
+                "Not enough data for trend analysis. "
+                f"Need at least 4 records, but found {len(history)}."
+            )
+
+        prices = [item.price for item in history]
+
+        volatility = self._calculate_volatility(prices)
+        trend, norm_slope = self._calculate_trend(prices)
+
         open_price = prices[-1]
         close_price = prices[0]
-        net_change = ((close_price - open_price) / open_price) * 100.0 if open_price != 0 else 0.0
-        
-        momentum = (abs(net_change) * 0.5) + (abs(norm_slope) * 20)
-        momentum_score = min(max(momentum, 0), 10)
+        net_change_percent = (
+            ((close_price - open_price) / open_price) * 100.0 if open_price else 0.0
+        )
+        momentum_score = self._calculate_momentum(net_change_percent, norm_slope)
 
         return TrendAnalysis(
             coin_id=coin_id,
-            record_count=n,
+            record_count=len(prices),
             trend=trend,
             volatility=volatility,
             momentum_score=momentum_score,
-            net_change_percent=net_change
+            net_change_percent=net_change_percent,
         )
+
     # =========================
     # Interactive Search
     # =========================
@@ -249,14 +286,14 @@ class CryptoTracker:
         querying the CoinGecko API.
         """
         query = query.lower()
-        
+
         # 1. Prioritize search in the hardcoded major coins list
         if query in MAJOR_COINS:
-            logging.info(f"Found '{query}' in the priority list.")
+            logging.info("Found '%s' in the priority list.", query)
             return [MAJOR_COINS[query]]
 
         # 2. Fallback to API search if not in the priority list
-        logging.info(f"'{query}' not in priority list, searching via API...")
+        logging.info("'%s' not in priority list, searching via API...", query)
         all_coins = self.client.get_supported_coins_with_details()
         results: list[dict] = []
 
@@ -266,22 +303,27 @@ class CryptoTracker:
             name = coin.get("name", "").lower()
 
             # --- Quality and relevance filters ---
-            if not all([symbol, coin_id, name]): continue
-            if "." in symbol or len(symbol) > 10: continue
-            if any(kw in name for kw in ["-peg", "wrapped", "token", "staked"]): continue
+            if not all([symbol, coin_id, name]):
+                continue
+            if "." in symbol or len(symbol) > 10:
+                continue
+            if any(kw in name for kw in ["-peg", "wrapped", "token", "staked"]):
+                continue
 
             # Match query against id, symbol, or name
-            if query == symbol or query == coin_id or query == name:
+            if query in (symbol, coin_id, name):
                 results.append(coin)
-                if len(results) >= limit: break
-        
+                if len(results) >= limit:
+                    break
+
         return results
 
     def add_tracked_coin_interactive(self, query: str) -> TrackedCoin:
         """Guides the user through searching for and adding a coin."""
         matches = self.search_coins(query)
         if not matches:
-            raise ValueError(f"No quality coins found for query '{query}'. Try a different symbol or name.")
+            raise ValueError(f"No quality coins found for query '{query}'. "
+                             "Try a different symbol or name.")
 
         print("\n--- Found Coins ---")
         for i, coin in enumerate(matches, start=1):
@@ -295,16 +337,19 @@ class CryptoTracker:
             # Otherwise, prompt the user to choose
             while True:
                 try:
-                    choice_str = input(f"Select number to track (1-{len(matches)}, or 0 to cancel): ").strip()
+                    choice_str = input(
+                        f"Select number to track (1-{len(matches)}, or 0 to cancel): "
+                    ).strip()
                     choice = int(choice_str)
-                    if 0 <= choice <= len(matches): break
+                    if 0 <= choice <= len(matches):
+                        break
                     logging.error("❌ Invalid number. Please choose from the list.")
                 except ValueError:
                     logging.error("❌ Invalid input. Please enter a number.")
-            
+
             if choice == 0:
                 raise ValueError("Operation cancelled by user.")
-            
+
             selected_coin = matches[choice - 1]
 
         return self.add_tracked_coin(
@@ -312,7 +357,7 @@ class CryptoTracker:
             symbol=selected_coin["symbol"],
             name=selected_coin["name"],
         )
-    
+
     def close(self) -> None:
         """Cleanly close the MongoDB connection."""
         self.connection.disconnect()

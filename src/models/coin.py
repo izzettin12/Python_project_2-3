@@ -1,8 +1,13 @@
+"""
+Data models for the crypto tracker application.
+
+This file defines both the pure Python dataclasses used for business logic
+and the MongoEngine Document models used for database persistence.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from mongoengine import (
     BooleanField,
@@ -26,6 +31,7 @@ class TrackedCoin:
     coin_id: str           # e.g. "bitcoin"
     symbol: str            # e.g. "btc"
     name: str              # e.g. "Bitcoin"
+    is_active: bool = True
 
 
 @dataclass(frozen=True)
@@ -57,12 +63,15 @@ class TrackedCoinDocument(Document):
     coin_id = StringField(required=True, unique=True)
     symbol = StringField(required=True)
     name = StringField(required=True)
+    is_active = BooleanField(default=True)
 
     def to_dataclass(self) -> TrackedCoin:
+        """Converts this document to a TrackedCoin dataclass."""
         return TrackedCoin(
             coin_id=self.coin_id,
             symbol=self.symbol,
             name=self.name,
+            is_active=self.is_active,
         )
 
 
@@ -81,6 +90,7 @@ class CoinPriceDocument(Document):
     timestamp = DateTimeField(required=True)
 
     def to_dataclass(self) -> CoinPrice:
+        """Converts this document to a CoinPrice dataclass."""
         return CoinPrice(
             coin_id=self.coin_id,
             price=self.price,

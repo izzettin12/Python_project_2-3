@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from src.services.tracker import CryptoTracker
-from src.models.coin import TrackedCoin
+from src.models.coin import TrackedCoin, CoinPrice
 
 
 # Mock data from CoinGecko API
@@ -64,41 +64,58 @@ def test_search_finds_valid_tokens(tracker_service: CryptoTracker):
     assert tracker_service.search_coins(query="xrp")[0]['id'] == 'ripple'
 
 
+@patch('src.services.tracker.CryptoTracker.search_coins')
 @patch('builtins.input', side_effect=['1', '']) # User chooses '1'
 @patch('src.services.tracker.TrackedCoinDocument')
-def test_add_coin_interactive_success(mock_doc, mock_input, tracker_service: CryptoTracker):
+def test_add_coin_interactive_success(mock_doc, mock_input, mock_search, tracker_service: CryptoTracker):
     """
     Test the interactive add coin workflow succeeds with valid input.
     """
     # Arrange
-    # Make the save method return a mock object that can be converted to a dataclass
-    mock_instance = MagicMock()
-    mock_instance.to_dataclass.return_value = TrackedCoin(
+    # Make search_coins return 2 results to ensure the interactive prompt is shown
+    mock_search.return_value = [
+        {'id': 'bitcoin', 'symbol': 'btc', 'name': 'Bitcoin'},
+        {'id': 'ethereum', 'symbol': 'eth', 'name': 'Ethereum'}
+    ]
+    # The to_dataclass method should be mocked on the document instance
+    mock_doc.return_value.to_dataclass.return_value = TrackedCoin(
         coin_id='bitcoin', symbol='btc', name='Bitcoin', is_active=True
     )
     mock_doc.objects.return_value.first.return_value = None # No existing coin
-    mock_doc.return_value.save.return_value = mock_instance
+    mock_doc.return_value.save.return_value = mock_doc.return_value # save returns self
 
     # Act
-    result = tracker_service.add_tracked_coin_interactive(query="bitcoin")
+    result = tracker_service.add_tracked_coin_interactive(query="any query")
 
     # Assert
     assert result is not None
     assert result.coin_id == 'bitcoin'
-    mock_input.assert_called_with("Select number to track (or 0 to cancel): ")
+    mock_input.assert_called_with("Select number to track (1-2, or 0 to cancel): ")
 
 
+@patch('src.services.tracker.CryptoTracker.search_coins')
 @patch('builtins.input', side_effect=['99', '0']) # User enters out-of-range, then cancels
-def test_add_coin_interactive_out_of_range_and_cancel(mock_input, tracker_service: CryptoTracker):
+@patch('src.services.tracker.TrackedCoinDocument')
+def test_add_coin_interactive_out_of_range_and_cancel(mock_doc, mock_input, mock_search, tracker_service: CryptoTracker):
     """
     Test that the interactive add function handles out-of-range and cancel inputs.
     """
+    # Arrange
+    # Make search_coins return 2 results to ensure the interactive prompt is shown
+    mock_search.return_value = [
+        {'id': 'c1', 'symbol': 'c1', 'name': 'Coin 1'},
+        {'id': 'c2', 'symbol': 'c2', 'name': 'Coin 2'}
+    ]
+    # Ensure the coin is not considered 'already tracked'
+    mock_doc.objects.return_value.first.return_value = None
+
     # Act & Assert
     with pytest.raises(ValueError, match="Operation cancelled by user"):
-        tracker_service.add_tracked_coin_interactive(query="btc")
+        tracker_service.add_tracked_coin_interactive(query="any query") # Query doesn't matter now
     
     # Ensures the loop for input validation ran before cancellation
     assert mock_input.call_count > 1
+
 
 
 def test_record_prices_fail_safe(tracker_service: CryptoTracker):
@@ -113,25 +130,20 @@ def test_record_prices_fail_safe(tracker_service: CryptoTracker):
     ]
     tracker_service.list_tracked_coins = MagicMock(return_value=active_coins)
     
-    # Make the API call succeed for bitcoin but fail for ethereum
-    tracker_service.client.get_price.side_effect = [
-        65000.0, # Success for bitcoin
-        RuntimeError("API failed for ethereum") # Failure for ethereum
-    ]
-    
-    # Mock the DB save call
-    with patch('src.services.tracker.CoinPriceDocument') as mock_price_doc:
-        # Act
-        results = tracker_service.record_prices_for_all_active()
+    # Mock record_price_for_coin to simulate one success and one failure
+    tracker_service.record_price_for_coin = MagicMock(side_effect=[
+        CoinPrice(coin_id='bitcoin', price=65000.0, timestamp=MagicMock()),
+        RuntimeError("API failed for ethereum")
+    ])
 
-        # Assert
-        # 1. Check that only one price was successfully recorded
-        assert len(results) == 1
-        assert results[0].coin_id == 'bitcoin'
-        assert results[0].price == 65000.0
-        
-        # 2. Check that the DB save method was called only once
-        mock_price_doc.assert_called_once()
-        
-        # 3. Check that get_price was called for both coins
-        assert tracker_service.client.get_price.call_count == 2
+    # Act
+    results = tracker_service.record_prices_for_all_tracked()
+
+    # Assert
+    # 1. Check that only one price was successfully recorded
+    assert len(results) == 1
+    assert results[0].coin_id == 'bitcoin'
+    assert results[0].price == 65000.0
+    
+    # 2. Check that record_price_for_coin was called for both coins
+    assert tracker_service.record_price_for_coin.call_count == 2

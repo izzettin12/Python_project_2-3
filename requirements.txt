@@ -1,7 +1,9 @@
 requests
 mongoengine
 pylint
+pymongo
 python-dotenv
+urllib3
 
 # Testing
 pytest
